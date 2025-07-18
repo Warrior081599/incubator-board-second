@@ -1,0 +1,312 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client-js"
+  output   = "../src/generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+model User {
+  id            String    @id @default(cuid())
+  email         String    @unique
+  name          String?
+  image         String?
+  password      String?
+  role          UserRole  @default(USER)
+  provider      String?   // 'google', 'credentials'
+  providerId    String?   @map("provider_id")
+  serialNumber  Int       @unique @map("serial_number") @default(autoincrement())
+  emailVerified DateTime? @map("email_verified")
+  createdAt     DateTime  @default(now()) @map("created_at")
+  updatedAt     DateTime  @updatedAt @map("updated_at")
+  lastLogin     DateTime? @map("last_login")
+  isActive      Boolean   @default(true) @map("is_active")
+
+  //Relations
+  ownedProjects    Project[]        @relation("ProjectOwner")
+  projectMembers   ProjectMember[]
+  createdIdeas     Idea[]           @relation("IdeaCreator")
+  assignedIdeas    Idea[]           @relation("IdeaAssignee")
+  createdTags      Tag[]
+  activityLogs     ActivityLog[]
+  exports          Export[]
+  settings         UserSettings?
+
+  @@index([email])
+  @@index([role])
+  @@index([serialNumber])
+  @@map("users")
+}
+
+model Project {
+  id          String    @id @default(cuid())
+  name        String
+  description String?
+  ownerId     String    @map("owner_id")
+  isArchived  Boolean   @default(false) @map("is_archived")
+  archivedAt  DateTime? @map("archived_at")
+  settings    Json?     // Project-specific settings
+  createdAt   DateTime  @default(now()) @map("created_at")
+  updatedAt   DateTime  @updatedAt @map("updated_at")
+
+  // Relations
+  owner          User             @relation("ProjectOwner", fields: [ownerId], references: [id], onDelete: Cascade)
+  members        ProjectMember[]
+  ideas          Idea[]
+  tags           Tag[]
+  activityLogs   ActivityLog[]
+  exports        Export[]
+
+  @@index([ownerId])
+  @@index([isArchived])
+  @@index([createdAt])
+  @@map("projects")
+}
+
+model ProjectMember {
+  id        String              @id @default(cuid())
+  projectId String              @map("project_id")
+  userId    String              @map("user_id")
+  role      ProjectMemberRole   @default(MEMBER)
+  joinedAt  DateTime            @default(now()) @map("joined_at")
+
+  // Relations
+  project   Project             @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  user      User                @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@unique([projectId, userId])
+  @@index([projectId])
+  @@index([userId])
+  @@map("project_members")
+}
+
+model Idea {
+  id          String        @id @default(cuid())
+  title       String
+  description String?       // Rich text/markdown
+  stage       IdeaStage     @default(SEED)
+  category    IdeaCategory?
+  priority    IdeaPriority  @default(MEDIUM)
+  projectId   String        @map("project_id")
+  createdBy   String        @map("created_by")
+  assignedTo  String?       @map("assigned_to")
+  isArchived  Boolean       @default(false) @map("is_archived")
+  archivedAt  DateTime?     @map("archived_at")
+  createdAt   DateTime      @default(now()) @map("created_at")
+  updatedAt   DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  project      Project       @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  creator      User          @relation("IdeaCreator", fields: [createdBy], references: [id], onDelete: Cascade)
+  assignee     User?         @relation("IdeaAssignee", fields: [assignedTo], references: [id], onDelete: SetNull)
+  ideaTags     IdeaTag[]
+  activityLogs ActivityLog[]
+
+  @@index([projectId])
+  @@index([createdBy])
+  @@index([assignedTo])
+  @@index([stage])
+  @@index([category])
+  @@index([isArchived])
+  @@index([createdAt])
+  @@index([updatedAt])
+  @@map("ideas")
+ }
+
+model Tag {
+  id         String    @id @default(cuid())
+  name       String
+  color      String?   // Hex color
+  projectId  String?   @map("project_id") // Project-scoped tags, null for global
+  createdBy  String    @map("created_by")
+  isGlobal   Boolean   @default(false) @map("is_global") // System-wide tags
+  usageCount Int       @default(0) @map("usage_count")
+  createdAt  DateTime  @default(now()) @map("created_at")
+
+  // Relations
+  project    Project?  @relation(fields: [projectId], references: [id], onDelete: Cascade)
+  creator    User      @relation(fields: [createdBy], references: [id], onDelete: Cascade)
+  ideaTags   IdeaTag[]
+
+  @@unique([projectId, name]) // Unique tag names per project
+  @@index([name])
+  @@index([projectId])
+  @@index([createdBy])
+  @@index([isGlobal])
+  @@map("tags")
+}
+
+model IdeaTag {
+  id        String   @id @default(cuid())
+  ideaId    String   @map("idea_id")
+  tagId     String   @map("tag_id")
+  createdAt DateTime @default(now()) @map("created_at")
+
+  // Relations
+  idea      Idea     @relation(fields: [ideaId], references: [id], onDelete: Cascade)
+  tag       Tag      @relation(fields: [tagId], references: [id], onDelete: Cascade)
+
+  @@unique([ideaId, tagId])
+  @@index([ideaId])
+  @@index([tagId])
+  @@map("idea_tags")
+}
+
+model ActivityLog {
+  id        String         @id @default(cuid())
+  userId    String         @map("user_id")
+  projectId String?        @map("project_id")
+  ideaId    String?        @map("idea_id")
+  action    ActivityAction
+  oldValue  Json?          @map("old_value") // Previous state
+  newValue  Json?          @map("new_value") // New state
+  metadata  Json?          // Additional context
+  createdAt DateTime       @default(now()) @map("created_at")
+
+  // Relations
+  user      User           @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project   Project?       @relation(fields: [projectId], references: [id], onDelete: SetNull)
+  idea      Idea?          @relation(fields: [ideaId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([ideaId])
+  @@index([action])
+  @@index([createdAt])
+  @@map("activity_logs")
+}
+
+model Export {
+  id          String       @id @default(cuid())
+  userId      String       @map("user_id")
+  projectId   String?      @map("project_id")
+  exportType  ExportType   @map("export_type")
+  fileName    String?      @map("file_name")
+  filePath    String?      @map("file_path")
+  status      ExportStatus @default(PENDING)
+  filters     Json?        // Export criteria
+  createdAt   DateTime     @default(now()) @map("created_at")
+  completedAt DateTime?    @map("completed_at")
+
+  // Relations
+  user        User         @relation(fields: [userId], references: [id], onDelete: Cascade)
+  project     Project?     @relation(fields: [projectId], references: [id], onDelete: SetNull)
+
+  @@index([userId])
+  @@index([projectId])
+  @@index([status])
+  @@index([createdAt])
+  @@map("exports")
+}
+
+model UserSettings {
+  id                 String        @id @default(cuid())
+  userId             String        @unique @map("user_id")
+  theme              String        @default("light")
+  defaultStage       IdeaStage     @default(SEED) @map("default_stage")
+  defaultPriority    IdeaPriority  @default(MEDIUM) @map("default_priority")
+  notificationsEnabled Boolean     @default(true) @map("notifications_enabled")
+  autoArchiveDays    Int           @default(90) @map("auto_archive_days")
+  preferredView      String        @default("kanban") @map("preferred_view")
+  customSettings     Json?         @map("custom_settings")
+  updatedAt          DateTime      @updatedAt @map("updated_at")
+
+  // Relations
+  user               User          @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("user_settings")
+}
+
+// Enums
+enum UserRole {
+  ADMIN     @map("admin")
+  SUBADMIN  @map("subadmin")
+  USER      @map("user")
+
+  @@map("user_role")
+}
+
+enum ProjectMemberRole {
+  OWNER   @map("owner")
+  ADMIN   @map("admin")
+  MEMBER  @map("member")
+  VIEWER  @map("viewer")
+
+  @@map("project_member_role")
+}
+
+enum IdeaStage {
+  SEED       @map("seed")
+  REFINING   @map("refining")
+  VALIDATING @map("validating")
+  LAUNCHING  @map("launching")
+
+  @@map("idea_stage")
+}
+
+enum IdeaCategory {
+  PRODUCT     @map("product")
+  SERVICE     @map("service")
+  BUSINESS    @map("business")
+  TECHNOLOGY  @map("technology")
+  MARKETING   @map("marketing")
+  RESEARCH    @map("research")
+  PERSONAL    @map("personal")
+  OTHER       @map("other")
+
+  @@map("idea_category")
+}
+
+enum IdeaPriority {
+  LOW     @map("low")
+  MEDIUM  @map("medium")
+  HIGH    @map("high")
+  URGENT  @map("urgent")
+
+  @@map("idea_priority")
+}
+
+enum ActivityAction {
+  CREATED         @map("created")
+  UPDATED         @map("updated")
+  STAGE_CHANGED   @map("stage_changed")
+  ASSIGNED        @map("assigned")
+  UNASSIGNED      @map("unassigned")
+  ARCHIVED        @map("archived")
+  RESTORED        @map("restored")
+  DELETED         @map("deleted")
+  TAG_ADDED       @map("tag_added")
+  TAG_REMOVED     @map("tag_removed")
+  EXPORTED        @map("exported")
+  PROJECT_CREATED @map("project_created")
+  MEMBER_ADDED    @map("member_added")
+  MEMBER_REMOVED  @map("member_removed")
+
+  @@map("activity_action")
+}
+
+enum ExportType {
+  JSON     @map("json")
+  MARKDOWN @map("markdown")
+  CSV      @map("csv")
+  PDF      @map("pdf")
+
+  @@map("export_type")
+}
+
+enum ExportStatus {
+  PENDING    @map("pending")
+  PROCESSING @map("processing")
+  COMPLETED  @map("completed")
+  FAILED     @map("failed")
+
+  @@map("export_status")
+}
